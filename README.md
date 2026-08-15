@@ -110,47 +110,21 @@ Executed after every Transformer encoder block:
 
 ### 3.1 4-Stage Probabilistic DAG
 
-```
-+------------------------------------------------------------------------------------+
-|                               Input: Clean Sinhala Text                            |
-+------------------------------------------------------------------------------------+
-                                           |
-                                           v
-+------------------------------------------------------------------------------------+
-| Stage 1: Linguistic & Dialectal Transformation Layer                                |
-| - Regional morphology / Up-Country (Kandyan) markers (e.g., "යන්න" -> "යන්ඩ")      |
-| - Spoken-to-Written colloquialisms & emphatic clitics ("තමයි" -> "තමා")            |
-+------------------------------------------------------------------------------------+
-                                           |
-                                           v
-+------------------------------------------------------------------------------------+
-| Stage 2: Input Method Engine (IME) Simulation (Branching)                          |
-| - Wijesekara SLS 1134 physical 2D Gaussian drift: P(k_j|k_i) ∝ exp(-d^2 / 2σ^2)    |
-| - Shift-state drop / inversion (e.g., Shift+s 'ශ' -> unshifted 'ි')                |
-| - Singlish Latin digraph variations (th/t, aa/a, ee/i)                             |
-+------------------------------------------------------------------------------------+
-                                           |
-                                           v
-+------------------------------------------------------------------------------------+
-| Stage 3: Orthographic, Glyph & Unicode Corruption Layer                            |
-| - Classical confusions: Murdhaja/Dantaja (න/ණ, ල/ළ), Mahaaprana (ක/ඛ, ත/ථ)         |
-| - Sanyaka prenasalized substitutions (ඟ->ග, ඳ->ද, ඬ->ඩ, ඹ->බ)                       |
-| - Unicode decomposition & combining mark mutations (ේ -> ෙ + ි)                    |
-| - Zero-Width Joiner (ZWJ) stripping in ligatures (ක්\u200Dර -> ක්ර)                |
-+------------------------------------------------------------------------------------+
-                                           |
-                                           v
-+------------------------------------------------------------------------------------+
-| Stage 4: Structural, Punctuation & Code-Switch Injection Layer                     |
-| - Punctuation & spacing mutations (missing spaces, period as space delimiter)       |
-| - Particle detachment (accidental space before 'ට', 'ගේ', 'ද', 'නම්')               |
-| - English code-mixed conversational markers ("thanks", "breaking news")            |
-+------------------------------------------------------------------------------------+
-                                           |
-                                           v
-+------------------------------------------------------------------------------------+
-| Output: Paired Training Tuple (Source_Noisy, Target_Clean, Edit_Metadata)          |
-+------------------------------------------------------------------------------------+
+```mermaid
+flowchart TD
+    In["<div style='width: 700px; text-align: center;'><b>Input: Clean Sinhala Text</b></div>"]
+    
+    S1["<div style='width: 700px; text-align: left;'><b>Stage 1: Linguistic & Dialectal Transformation Layer</b><br/>• Regional morphology / Up-Country markers (e.g., 'යන්න' → 'යන්ඩ')<br/>• Spoken-to-Written colloquialisms & emphatic clitics ('තමයි' → 'තමා')</div>"]
+    
+    S2["<div style='width: 700px; text-align: left;'><b>Stage 2: Input Method Engine (IME) Simulation (Branching)</b><br/>• Wijesekara SLS 1134 physical 2D Gaussian drift: P(k_j|k_i) ∝ exp(-d² / 2σ²)<br/>• Shift-state drop / inversion (e.g., Shift+s 'ශ' → unshifted 'ි')<br/>• Singlish Latin digraph variations (th/t, aa/a, ee/i)</div>"]
+    
+    S3["<div style='width: 700px; text-align: left;'><b>Stage 3: Orthographic, Glyph & Unicode Corruption Layer</b><br/>• Classical confusions: Murdhaja/Dantaja (න/ණ, ල/ළ), Mahaaprana (ක/ඛ, ත/ථ)<br/>• Sanyaka prenasalized substitutions (ඟ→ග, ඳ→ද, ඬ→ඩ, ඹ→බ)<br/>• Unicode decomposition & combining mark mutations (ේ → ෙ + ි)<br/>• Zero-Width Joiner (ZWJ) stripping in ligatures (ක්\u200Dර → ක්ර)</div>"]
+    
+    S4["<div style='width: 700px; text-align: left;'><b>Stage 4: Structural, Punctuation & Code-Switch Injection Layer</b><br/>• Punctuation & spacing mutations (missing spaces, period delimiters)<br/>• Particle detachment (accidental space before 'ට', 'ගේ', 'ද', 'නම්')<br/>• English code-mixed conversational markers ('thanks', 'breaking news')</div>"]
+    
+    Out["<div style='width: 700px; text-align: center;'><b>Output: Paired Training Tuple</b><br/><code>(Source_Noisy, Target_Clean, Edit_Metadata)</code></div>"]
+
+    In --> S1 --> S2 --> S3 --> S4 --> Out
 ```
 
 ### 3.2 3-Phase Curriculum Training
