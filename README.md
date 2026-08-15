@@ -184,7 +184,8 @@ pip install -e .
 ## 5. Pre-Training Pipeline
 
 Sinhala-CharBERT initializes from a pre-trained BERT backbone (such as `Ransaka/sinhala-bert-medium-v2`), loading subword embeddings and Transformer layers, while training the character Bi-GRU, HI modules, and Noisy Language Modeling (NLM) head from scratch under joint optimization:
-$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MLM}} + \mathcal{L}_{\text{NLM}}$
+
+$$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MLM}} + \mathcal{L}_{\text{NLM}}$$
 
 ### 5.1 Quickstart Command
 
