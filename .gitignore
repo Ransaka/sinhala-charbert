@@ -1,0 +1,30 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Model Checkpoints & Large Weights
+checkpoints/
+*.pt
+*.bin
+*.safetensors
+
+# OS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
