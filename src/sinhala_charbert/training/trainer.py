@@ -271,11 +271,18 @@ class SinhalaCharBERTTrainer:
         }
 
     def save_checkpoint(self, output_dir: Union[str, Path]) -> None:
-        """Saves model weights, optimizer, and training configuration."""
+        """Saves model weights, optimizer, vocabularies, and training configuration."""
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
         torch.save(self.model.state_dict(), out_path / "pytorch_model.bin")
         torch.save(self.optimizer.state_dict(), out_path / "optimizer.pt")
         torch.save(self.scheduler.state_dict(), out_path / "scheduler.pt")
+
+        # Save vocabularies and dictionaries for standalone downstream inference
+        if hasattr(self.train_dataset, "char_tokenizer") and self.train_dataset.char_tokenizer is not None:
+            self.train_dataset.char_tokenizer.save(out_path / "char_vocab.json")
+        if hasattr(self.train_dataset, "nlm_dictionary") and self.train_dataset.nlm_dictionary is not None:
+            self.train_dataset.nlm_dictionary.save(out_path / "nlm_dict.json")
+
         print(f"Checkpoint successfully saved to '{out_path}'")

@@ -1,5 +1,5 @@
 """
-Sinhala-CharBERT PyTorch model architecture, encoders, and interaction modules.
+Sinhala-CharBERT PyTorch model architecture, encoders, decoders, and interaction modules.
 """
 
 from sinhala_charbert.models.embeddings import SinhalaTokenEmbeddings, SinhalaCharEmbeddings
@@ -12,6 +12,20 @@ from sinhala_charbert.models.modeling_charbert import (
     SinhalaCharBERTForPreTraining,
     SinhalaCharBERTOutput,
     SinhalaCharBERTPreTrainingOutput,
+)
+from sinhala_charbert.models.word_corrector import (
+    BoundedWordCorrector,
+    WordCorrectionCandidate,
+)
+from sinhala_charbert.models.seq2seq_decoder import (
+    SinhalaCharBERTDecoderLayer,
+    SinhalaCharBERTSeq2SeqModel,
+    Seq2SeqCorrectionOutput,
+)
+from sinhala_charbert.models.pipeline import (
+    SinhalaCharBERTCorrector,
+    CorrectionResult,
+    EditOp,
 )
 
 __all__ = [
@@ -27,4 +41,12 @@ __all__ = [
     "SinhalaCharBERTForPreTraining",
     "SinhalaCharBERTOutput",
     "SinhalaCharBERTPreTrainingOutput",
+    "BoundedWordCorrector",
+    "WordCorrectionCandidate",
+    "SinhalaCharBERTDecoderLayer",
+    "SinhalaCharBERTSeq2SeqModel",
+    "Seq2SeqCorrectionOutput",
+    "SinhalaCharBERTCorrector",
+    "CorrectionResult",
+    "EditOp",
 ]

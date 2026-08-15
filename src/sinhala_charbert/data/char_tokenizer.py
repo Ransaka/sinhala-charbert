@@ -3,6 +3,7 @@ Phonological Unit (Akshara) Tokenizer for the Character Channel.
 Wraps sinlib phonological segmentation with specialized special token handling.
 """
 
+from pathlib import Path
 from typing import Dict, List, Optional, Set, Union
 from sinlib.utils.preprocessing import normalize_sinhala, process_text
 
@@ -90,3 +91,20 @@ class SinhalaCharTokenizer:
                 continue
             units.append(self.inv_vocab_map.get(tid, self.UNK_TOKEN))
         return "".join(units)
+
+    def save(self, filepath: Union[str, Path]) -> None:
+        """Saves character tokenizer vocabulary to a JSON file."""
+        import json
+        out_path = Path(filepath)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(self.vocab_map, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def load(cls, filepath: Union[str, Path]) -> "SinhalaCharTokenizer":
+        """Loads character tokenizer vocabulary from a JSON file."""
+        import json
+        with open(filepath, "r", encoding="utf-8") as f:
+            vocab = json.load(f)
+        return cls(vocab_map=vocab)
+
