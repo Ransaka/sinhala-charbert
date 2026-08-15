@@ -258,6 +258,8 @@ class SinhalaCharBERTForPreTraining(nn.Module):
         cls,
         backbone_model_or_path: Union[str, nn.Module],
         config: Optional[SinhalaCharBERTConfig] = None,
+        char_vocab_size: Optional[int] = None,
+        nlm_vocab_size: Optional[int] = None,
         **kwargs,
     ) -> "SinhalaCharBERTForPreTraining":
         """
@@ -282,13 +284,15 @@ class SinhalaCharBERTForPreTraining(nn.Module):
         if config is None:
             config = SinhalaCharBERTConfig(
                 vocab_size=backbone_config.vocab_size,
+                char_vocab_size=char_vocab_size or 1500,
+                nlm_vocab_size=nlm_vocab_size or 32000,
                 hidden_size=backbone_config.hidden_size,
                 char_gru_hidden_size=backbone_config.hidden_size // 2,
                 num_hidden_layers=backbone_config.num_hidden_layers,
                 num_attention_heads=getattr(backbone_config, "num_attention_heads", 12),
                 intermediate_size=getattr(backbone_config, "intermediate_size", 3072),
                 hidden_act=getattr(backbone_config, "hidden_act", "gelu"),
-                max_position_embeddings=getattr(backbone_config, "max_position_embeddings", 512),
+                max_position_embeddings=getattr(backbone_config, "max_position_embeddings", 256),
                 type_vocab_size=getattr(backbone_config, "type_vocab_size", 2),
                 layer_norm_eps=getattr(backbone_config, "layer_norm_eps", 1e-12),
                 pad_token_id=getattr(backbone_config, "pad_token_id", 0) or 0,

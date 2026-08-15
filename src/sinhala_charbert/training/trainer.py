@@ -185,6 +185,9 @@ class SinhalaCharBERTTrainer:
                     self.scheduler.step()
                     self.optimizer.zero_grad()
 
+                    if self.device.type == "mps" and (global_step + 1) % 10 == 0:
+                        torch.mps.empty_cache()
+
                 global_step += 1
 
                 # Logging

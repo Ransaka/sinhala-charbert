@@ -44,6 +44,12 @@ class SinhalaTokenEmbeddings(nn.Module):
         token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        # Enforce max position sequence length
+        if input_ids.size(1) > self.position_embeddings.num_embeddings:
+            input_ids = input_ids[:, : self.position_embeddings.num_embeddings]
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids[:, : self.position_embeddings.num_embeddings]
+
         seq_length = input_ids.size(1)
         if position_ids is None:
             position_ids = self.position_ids[:, :seq_length]

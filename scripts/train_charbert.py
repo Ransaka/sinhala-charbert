@@ -58,8 +58,26 @@ def main():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=32,
-        help="Per-device training batch size.",
+        default=8,
+        help="Per-device training micro-batch size.",
+    )
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=4,
+        help="Number of update steps to accumulate before performing a backward/update pass.",
+    )
+    parser.add_argument(
+        "--max_subword_length",
+        type=int,
+        default=256,
+        help="Maximum subword token sequence length.",
+    )
+    parser.add_argument(
+        "--max_char_length",
+        type=int,
+        default=512,
+        help="Maximum phonological character sequence length.",
     )
     parser.add_argument(
         "--learning_rate",
@@ -114,6 +132,8 @@ def main():
     alignment_engine = SequenceAlignmentEngine(
         subword_tokenizer=subword_tokenizer,
         char_tokenizer=char_tokenizer,
+        max_subword_length=args.max_subword_length,
+        max_char_length=args.max_char_length,
     )
 
     # 3. Build NLM Candidate Dictionary
@@ -136,7 +156,11 @@ def main():
     # 5. Model Initialization
     if args.backbone_path:
         print(f"Initializing Sinhala-CharBERT from backbone '{args.backbone_path}'...")
-        model = SinhalaCharBERTForPreTraining.from_pretrained_backbone(args.backbone_path)
+        model = SinhalaCharBERTForPreTraining.from_pretrained_backbone(
+            args.backbone_path,
+            char_vocab_size=char_tokenizer.vocab_size,
+            nlm_vocab_size=nlm_dict.vocab_size,
+        )
     else:
         print("Initializing Sinhala-CharBERT from scratch...")
         from sinhala_charbert.config.model_config import SinhalaCharBERTConfig
@@ -144,6 +168,7 @@ def main():
             vocab_size=subword_tokenizer.vocab_size,
             char_vocab_size=char_tokenizer.vocab_size,
             nlm_vocab_size=nlm_dict.vocab_size,
+            max_position_embeddings=args.max_subword_length,
         )
         model = SinhalaCharBERTForPreTraining(model_config)
 
@@ -151,6 +176,7 @@ def main():
     train_config = TrainingConfig(
         output_dir=args.output_dir,
         batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.learning_rate,
         max_steps=args.max_steps,
         warmup_steps=args.warmup_steps,

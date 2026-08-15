@@ -34,8 +34,8 @@ class SequenceAlignmentEngine:
         self,
         subword_tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer, Any],
         char_tokenizer: SinhalaCharTokenizer,
-        max_subword_length: int = 512,
-        max_char_length: int = 1024,
+        max_subword_length: int = 256,
+        max_char_length: int = 512,
     ):
         self.subword_tokenizer = subword_tokenizer
         self.char_tokenizer = char_tokenizer
