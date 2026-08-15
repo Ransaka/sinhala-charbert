@@ -36,7 +36,7 @@ class SinhalaNLMDictionary:
         self,
         texts: Iterable[str],
         max_words: int = 32000,
-        min_freq: int = 2,
+        min_freq: int = 1,
     ) -> None:
         """
         Builds vocabulary from a stream of Sinhala texts.

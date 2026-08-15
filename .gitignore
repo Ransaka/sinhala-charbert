@@ -27,4 +27,5 @@ checkpoints/
 # OS metadata
 .DS_Store
 .AppleDouble
-.LSOverride
+# Benchmark evaluation outputs
+benchmark_results.json
