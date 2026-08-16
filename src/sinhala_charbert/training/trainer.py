@@ -1,5 +1,6 @@
 """
 Sinhala-CharBERT Pre-Training Engine with Joint Dual-Objective Optimization and Noise Curriculum.
+Supports single-device (CPU/CUDA/MPS) and multi-GPU Distributed Data Parallel (DDP) training.
 """
 
 import math
@@ -8,7 +9,10 @@ from pathlib import Path
 import time
 from typing import Dict, Optional, Union
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 
 from sinhala_charbert.config.training_config import TrainingConfig
@@ -21,6 +25,10 @@ class SinhalaCharBERTTrainer:
     Pre-trainer for Sinhala-CharBERT.
     Jointly optimizes Masked Language Modeling (MLM) and Noisy Language Modeling (NLM)
     under an adaptive 3-phase SynTypo-SI noise curriculum.
+
+    Automatically detects and activates PyTorch DistributedDataParallel (DDP) when
+    launched via ``torchrun --nproc_per_node=N``. Falls back to single-device training
+    otherwise.
     """
 
     def __init__(
@@ -36,17 +44,19 @@ class SinhalaCharBERTTrainer:
         self.eval_dataset = eval_dataset
         self.cfg = config or TrainingConfig()
 
-        if device is None:
-            if torch.cuda.is_available():
-                self.device = torch.device("cuda")
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                self.device = torch.device("mps")
-            else:
-                self.device = torch.device("cpu")
-        else:
-            self.device = device
+        # Distributed training state
+        self._setup_distributed(device)
 
         self.model.to(self.device)
+
+        # Wrap model with DDP when running distributed
+        if self.is_distributed:
+            self.model = DDP(
+                self.model,
+                device_ids=[self.local_rank],
+                output_device=self.local_rank,
+                find_unused_parameters=self.cfg.ddp_find_unused_parameters,
+            )
 
         # Setup Optimizer (AdamW) with weight decay exclusions for biases and LayerNorm
         no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight"]
@@ -84,12 +94,59 @@ class SinhalaCharBERTTrainer:
         self.scaler = torch.amp.GradScaler("cuda") if (self.cfg.fp16 and self.device.type == "cuda") else None
 
         # Data Collator
+        model_config = self._unwrapped_model.config
         self.collator = PretrainDualChannelCollator(
-            subword_pad_token_id=self.model.config.pad_token_id,
-            subword_vocab_size=self.model.config.vocab_size,
-            char_pad_token_id=self.model.config.char_pad_token_id,
+            subword_pad_token_id=model_config.pad_token_id,
+            subword_vocab_size=model_config.vocab_size,
+            char_pad_token_id=model_config.char_pad_token_id,
             mlm_probability=self.cfg.mlm_probability,
         )
+
+    # ------------------------------------------------------------------
+    # Distributed Utilities
+    # ------------------------------------------------------------------
+
+    def _setup_distributed(self, device: Optional[torch.device]) -> None:
+        """Detects and configures distributed training environment."""
+        self.is_distributed = dist.is_available() and dist.is_initialized()
+
+        if self.is_distributed:
+            self.rank = dist.get_rank()
+            self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            self.world_size = dist.get_world_size()
+            self.device = torch.device(f"cuda:{self.local_rank}")
+            torch.cuda.set_device(self.device)
+        else:
+            self.rank = 0
+            self.local_rank = 0
+            self.world_size = 1
+            if device is not None:
+                self.device = device
+            elif torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = torch.device("cpu")
+
+    @property
+    def is_main_process(self) -> bool:
+        """Returns True on rank 0 (the primary process for logging and checkpointing)."""
+        return self.rank == 0
+
+    @property
+    def _unwrapped_model(self) -> SinhalaCharBERTForPreTraining:
+        """Returns the underlying model without the DDP wrapper."""
+        return self.model.module if isinstance(self.model, DDP) else self.model
+
+    def _log(self, msg: str) -> None:
+        """Prints a message only on the main process."""
+        if self.is_main_process:
+            print(msg)
+
+    # ------------------------------------------------------------------
+    # Training Loop
+    # ------------------------------------------------------------------
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Executes a single optimization forward and backward step."""
@@ -146,22 +203,44 @@ class SinhalaCharBERTTrainer:
 
     def train(self) -> None:
         """Executes the full pre-training loop over the specified maximum steps."""
+        # Setup sampler: DistributedSampler for multi-GPU, None for single device
+        sampler = None
+        shuffle = True
+        if self.is_distributed:
+            sampler = DistributedSampler(
+                self.train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+            )
+            shuffle = False  # Sampler handles shuffling
+
         dataloader = DataLoader(
             self.train_dataset,
             batch_size=self.cfg.batch_size,
-            shuffle=True,
+            shuffle=shuffle,
+            sampler=sampler,
             collate_fn=self.collator,
-            num_workers=0,
+            num_workers=self.cfg.dataloader_num_workers,
+            pin_memory=(self.device.type == "cuda"),
         )
 
         global_step = 0
         total_loss = 0.0
+        epoch = 0
         start_time = time.time()
 
-        print(f"Starting Sinhala-CharBERT Pre-Training on device '{self.device}'...")
-        print(f"Total Steps: {self.cfg.max_steps} | Batch Size: {self.cfg.batch_size} | LR: {self.cfg.learning_rate}")
+        self._log(
+            f"Starting Sinhala-CharBERT Pre-Training on device '{self.device}'"
+            + (f" (DDP: {self.world_size} GPUs)" if self.is_distributed else "") + "..."
+        )
+        self._log(f"Total Steps: {self.cfg.max_steps} | Batch Size: {self.cfg.batch_size} | LR: {self.cfg.learning_rate}")
 
         while global_step < self.cfg.max_steps:
+            # Update sampler epoch for proper shuffling across DDP ranks
+            if sampler is not None:
+                sampler.set_epoch(epoch)
+
             for batch in dataloader:
                 if global_step >= self.cfg.max_steps:
                     break
@@ -190,8 +269,8 @@ class SinhalaCharBERTTrainer:
 
                 global_step += 1
 
-                # Logging
-                if global_step % self.cfg.logging_steps == 0:
+                # Logging (rank 0 only)
+                if global_step % self.cfg.logging_steps == 0 and self.is_main_process:
                     avg_loss = total_loss / self.cfg.logging_steps
                     elapsed = time.time() - start_time
                     lr = self.scheduler.get_last_lr()[0]
@@ -203,19 +282,26 @@ class SinhalaCharBERTTrainer:
                     )
                     total_loss = 0.0
 
-                # Periodic Evaluation
-                if self.eval_dataset is not None and global_step % self.cfg.eval_steps == 0:
+                # Periodic Evaluation (rank 0 only)
+                if self.eval_dataset is not None and global_step % self.cfg.eval_steps == 0 and self.is_main_process:
                     eval_metrics = self.evaluate()
                     print(f"\n--- Validation [Step {global_step}] ---")
                     print(f"Val Loss: {eval_metrics['val_loss']:.4f} (MLM: {eval_metrics['val_mlm_loss']:.4f}, NLM: {eval_metrics['val_nlm_loss']:.4f})\n")
 
-                # Periodic Checkpoint Saving
-                if global_step % self.cfg.save_steps == 0:
+                # Periodic Checkpoint Saving (rank 0 only)
+                if global_step % self.cfg.save_steps == 0 and self.is_main_process:
                     ckpt_path = Path(self.cfg.output_dir) / f"checkpoint-{global_step}"
                     self.save_checkpoint(ckpt_path)
 
-        print(f"Pre-training complete! Saving final checkpoint to '{self.cfg.output_dir}'...")
-        self.save_checkpoint(Path(self.cfg.output_dir) / "final_model")
+            epoch += 1
+
+        self._log(f"Pre-training complete! Saving final checkpoint to '{self.cfg.output_dir}'...")
+        if self.is_main_process:
+            self.save_checkpoint(Path(self.cfg.output_dir) / "final_model")
+
+        # Synchronize all processes before exit
+        if self.is_distributed:
+            dist.barrier()
 
     def evaluate(self) -> Dict[str, float]:
         """Evaluates model on the validation dataset."""
@@ -275,7 +361,9 @@ class SinhalaCharBERTTrainer:
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
-        torch.save(self.model.state_dict(), out_path / "pytorch_model.bin")
+        # Unwrap DDP model to save clean state_dict loadable on any device
+        model_to_save = self._unwrapped_model
+        torch.save(model_to_save.state_dict(), out_path / "pytorch_model.bin")
         torch.save(self.optimizer.state_dict(), out_path / "optimizer.pt")
         torch.save(self.scheduler.state_dict(), out_path / "scheduler.pt")
 
@@ -285,4 +373,4 @@ class SinhalaCharBERTTrainer:
         if hasattr(self.train_dataset, "nlm_dictionary") and self.train_dataset.nlm_dictionary is not None:
             self.train_dataset.nlm_dictionary.save(out_path / "nlm_dict.json")
 
-        print(f"Checkpoint successfully saved to '{out_path}'")
+        self._log(f"Checkpoint successfully saved to '{out_path}'")

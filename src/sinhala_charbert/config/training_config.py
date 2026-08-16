@@ -29,3 +29,5 @@ class TrainingConfig:
     eval_steps: int = 5000
     logging_steps: int = 500
     seed: int = 42
+    dataloader_num_workers: int = 2
+    ddp_find_unused_parameters: bool = False

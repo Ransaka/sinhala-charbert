@@ -35,7 +35,6 @@ class SinhalaCharBERTLayer(nn.Module):
             initializer_range=config.initializer_range,
             layer_norm_eps=config.layer_norm_eps,
             pad_token_id=config.pad_token_id,
-            attn_implementation="eager",
         )
         self.transformer_layer = BertLayer(bert_config)
         self.hi_module = HeterogeneousInteractionModule(config)
