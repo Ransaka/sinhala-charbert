@@ -77,6 +77,17 @@ class SinhalaNLMDictionary:
     @classmethod
     def load(cls, filepath: Union[str, Path]) -> "SinhalaNLMDictionary":
         """Loads dictionary vocabulary from a JSON file."""
+        import json
         with open(filepath, "r", encoding="utf-8") as f:
             vocab = json.load(f)
         return cls(vocab_map=vocab)
+
+    def load_vocab(self, filepath: Union[str, Path]) -> "SinhalaNLMDictionary":
+        """Loads dictionary vocabulary in-place from a JSON file."""
+        import json
+        with open(filepath, "r", encoding="utf-8") as f:
+            self.vocab_map = json.load(f)
+        self.inv_vocab_map = {v: k for k, v in self.vocab_map.items()}
+        self.pad_id = self.vocab_map.get(self.PAD_TOKEN, 0)
+        self.unk_id = self.vocab_map.get(self.UNK_TOKEN, 1)
+        return self

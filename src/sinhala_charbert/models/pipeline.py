@@ -113,9 +113,9 @@ class SinhalaCharBERTCorrector:
 
         path = Path(model_path_or_name)
         if (path / "nlm_dict.json").exists():
-            nlm_dict.load(path / "nlm_dict.json")
+            nlm_dict = SinhalaNLMDictionary.load(path / "nlm_dict.json")
         if (path / "char_vocab.json").exists():
-            char_tok.load(path / "char_vocab.json")
+            char_tok = SinhalaCharTokenizer.load(path / "char_vocab.json")
 
         align_engine = SequenceAlignmentEngine(
             subword_tokenizer=subword_tok,

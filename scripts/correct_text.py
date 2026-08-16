@@ -67,9 +67,9 @@ def main():
 
     ckpt_path = Path(args.checkpoint_path)
     if (ckpt_path / "nlm_dict.json").exists():
-        nlm_dict.load(ckpt_path / "nlm_dict.json")
+        nlm_dict = SinhalaNLMDictionary.load(ckpt_path / "nlm_dict.json")
     if (ckpt_path / "char_vocab.json").exists():
-        char_tokenizer.load(ckpt_path / "char_vocab.json")
+        char_tokenizer = SinhalaCharTokenizer.load(ckpt_path / "char_vocab.json")
 
     char_vocab_size = char_tokenizer.vocab_size
     nlm_vocab_size = nlm_dict.vocab_size

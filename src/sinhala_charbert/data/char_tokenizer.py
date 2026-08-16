@@ -108,3 +108,16 @@ class SinhalaCharTokenizer:
             vocab = json.load(f)
         return cls(vocab_map=vocab)
 
+    def load_vocab(self, filepath: Union[str, Path]) -> "SinhalaCharTokenizer":
+        """Loads character tokenizer vocabulary in-place from a JSON file."""
+        import json
+        with open(filepath, "r", encoding="utf-8") as f:
+            self.vocab_map = json.load(f)
+        self.inv_vocab_map = {v: k for k, v in self.vocab_map.items()}
+        self.pad_token_id = self.vocab_map.get(self.PAD_TOKEN, 0)
+        self.unk_token_id = self.vocab_map.get(self.UNK_TOKEN, 1)
+        self.bos_token_id = self.vocab_map.get(self.BOS_TOKEN, 2)
+        self.eos_token_id = self.vocab_map.get(self.EOS_TOKEN, 3)
+        self.mask_token_id = self.vocab_map.get(self.MASK_TOKEN, 4)
+        return self
+
