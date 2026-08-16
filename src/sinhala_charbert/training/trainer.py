@@ -318,6 +318,8 @@ class SinhalaCharBERTTrainer:
 
         global_step = 0
         total_loss = 0.0
+        total_mlm_loss = 0.0
+        total_nlm_loss = 0.0
         epoch = 0
 
         # Resume from checkpoint if specified
@@ -361,6 +363,8 @@ class SinhalaCharBERTTrainer:
 
                 step_metrics = self.train_step(batch)
                 total_loss += step_metrics["loss"]
+                total_mlm_loss += step_metrics["mlm_loss"]
+                total_nlm_loss += step_metrics["nlm_loss"]
 
                 if (global_step + 1) % self.cfg.gradient_accumulation_steps == 0:
                     if self.scaler is not None:
@@ -383,15 +387,19 @@ class SinhalaCharBERTTrainer:
                 # Logging (rank 0 only)
                 if global_step % self.cfg.logging_steps == 0 and self.is_main_process:
                     avg_loss = total_loss / self.cfg.logging_steps
+                    avg_mlm = total_mlm_loss / self.cfg.logging_steps
+                    avg_nlm = total_nlm_loss / self.cfg.logging_steps
                     elapsed = time.time() - start_time
                     lr = self.scheduler.get_last_lr()[0]
                     curriculum_phase = self.train_dataset.curriculum.get_phase_name(global_step)
                     print(
                         f"Step [{global_step:6d}/{self.cfg.max_steps}] | "
-                        f"Loss: {avg_loss:.4f} (MLM: {step_metrics['mlm_loss']:.4f}, NLM: {step_metrics['nlm_loss']:.4f}) | "
+                        f"Loss: {avg_loss:.4f} (MLM: {avg_mlm:.4f}, NLM: {avg_nlm:.4f}) | "
                         f"LR: {lr:.2e} | {curriculum_phase} | {elapsed:.1f}s"
                     )
                     total_loss = 0.0
+                    total_mlm_loss = 0.0
+                    total_nlm_loss = 0.0
 
                 # Periodic Evaluation (rank 0 only)
                 if self.eval_dataset is not None and global_step % self.cfg.eval_steps == 0 and self.is_main_process:
