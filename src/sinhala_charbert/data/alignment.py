@@ -2,7 +2,7 @@
 Sequence Alignment Engine for mapping subword tokens to phonological character unit boundaries.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 from transformers import AutoTokenizer, PreTrainedTokenizerFast, PreTrainedTokenizer
 
@@ -22,6 +22,7 @@ class AlignedSequence:
     char_attention_mask: List[int]
     start_char_idx: List[int]
     end_char_idx: List[int]
+    subword_offsets: List[Tuple[int, int]] = field(default_factory=list)
 
 
 class SequenceAlignmentEngine:
@@ -149,4 +150,5 @@ class SequenceAlignmentEngine:
             char_attention_mask=char_attn,
             start_char_idx=start_char_idx,
             end_char_idx=end_char_idx,
+            subword_offsets=subword_offsets,
         )

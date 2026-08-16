@@ -98,6 +98,13 @@ class TestTrainingPipeline(unittest.TestCase):
         item = dataset[0]
         self.assertIn("aligned_seq", item)
         self.assertIn("nlm_labels", item)
+        self.assertEqual(len(item["nlm_labels"]), len(item["aligned_seq"].input_ids))
+        # Verify subword offsets are present
+        self.assertTrue(len(item["aligned_seq"].subword_offsets) > 0)
+        # Verify non -100 labels are valid dictionary IDs
+        valid_labels = [lbl for lbl in item["nlm_labels"] if lbl != -100]
+        for lbl in valid_labels:
+            self.assertTrue(0 <= lbl < nlm_dict.vocab_size)
 
         # Test batch collation
         collator = PretrainDualChannelCollator(

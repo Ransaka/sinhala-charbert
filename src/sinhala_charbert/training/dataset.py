@@ -58,10 +58,11 @@ class SinhalaCharBERTPretrainDataset(Dataset):
         noise_profile = self.curriculum.get_profile(self.current_step)
         synthesizer = SinhalaTypoSynthesizer(profile=noise_profile)
 
-        # 2. Synthesize noisy text
+        # 2. Synthesize noisy text with word alignments
         noise_result = synthesizer.generate_pair(clean_text)
         noisy_text = noise_result["source_noisy"]
         clean_text = noise_result["target_clean"]
+        word_alignments = noise_result.get("word_alignments", [])
 
         # Fallback if noisy string is empty
         if not noisy_text.strip():
@@ -71,16 +72,38 @@ class SinhalaCharBERTPretrainDataset(Dataset):
         aligned: AlignedSequence = self.alignment_engine.align(noisy_text)
         m_len = len(aligned.input_ids)
 
-        # 4. Generate NLM (Noisy Language Modeling) character-channel targets
-        # NLM targets predict clean words for corrupted or sampled token spans
+        # 4. Generate Position-Aligned NLM character-channel targets
+        # NLM targets predict the exact canonical clean word originating each token span
         nlm_labels = [-100] * m_len
-        clean_words = clean_text.split()
 
         for t_idx in range(1, m_len - 1):  # Skip [CLS] and [SEP]
-            if random.random() < self.nlm_probability and clean_words:
-                target_word = random.choice(clean_words).strip(".,;:!?\"'()[]{}«»-")
-                if target_word and target_word in self.nlm_dictionary.vocab_map:
-                    nlm_labels[t_idx] = self.nlm_dictionary.word_to_id(target_word)
+            tok_start, tok_end = (
+                aligned.subword_offsets[t_idx]
+                if (aligned.subword_offsets and t_idx < len(aligned.subword_offsets))
+                else (0, 0)
+            )
+
+            # Skip padding/empty offsets
+            if tok_start == 0 and tok_end == 0:
+                continue
+
+            # Find matching word alignment entry by character span overlap in noisy_text
+            matched_entry = None
+            for entry in word_alignments:
+                w_start, w_end = entry.get("noisy_span", (0, 0))
+                if max(tok_start, w_start) < min(tok_end, w_end):
+                    matched_entry = entry
+                    break
+
+            if matched_entry is not None:
+                clean_target = matched_entry.get("clean_word", "")
+                is_corrupted = matched_entry.get("is_corrupted", False)
+
+                # Corrupted tokens are always supervised; clean tokens are sampled at nlm_probability
+                should_supervise = is_corrupted or (random.random() < self.nlm_probability)
+
+                if should_supervise and clean_target and clean_target in self.nlm_dictionary.vocab_map:
+                    nlm_labels[t_idx] = self.nlm_dictionary.word_to_id(clean_target)
 
         return {
             "aligned_seq": aligned,

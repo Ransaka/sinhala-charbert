@@ -58,9 +58,17 @@ class TestSynTypoSI(unittest.TestCase):
         res = self.synthesizer.generate_pair(clean_text)
         self.assertIn("source_noisy", res)
         self.assertIn("target_clean", res)
+        self.assertIn("word_alignments", res)
         self.assertEqual(res["target_clean"], clean_text)
         self.assertTrue(isinstance(res["source_noisy"], str))
         self.assertTrue(len(res["source_noisy"]) > 0)
+        self.assertTrue(len(res["word_alignments"]) > 0)
+        # Verify word alignment structure
+        first_align = res["word_alignments"][0]
+        self.assertIn("clean_word", first_align)
+        self.assertIn("noisy_word", first_align)
+        self.assertIn("noisy_span", first_align)
+
 
 
 if __name__ == "__main__":
