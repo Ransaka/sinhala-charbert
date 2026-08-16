@@ -148,6 +148,18 @@ def main():
         help="Number of DataLoader worker processes per GPU.",
     )
     parser.add_argument(
+        "--mlm_loss_weight",
+        type=float,
+        default=1.0,
+        help="Scalar weight for the MLM loss term in the combined objective.",
+    )
+    parser.add_argument(
+        "--nlm_loss_weight",
+        type=float,
+        default=1.0,
+        help="Scalar weight for the NLM loss term in the combined objective.",
+    )
+    parser.add_argument(
         "--find_unused_parameters",
         action="store_true",
         default=True,
@@ -250,6 +262,8 @@ def main():
         save_steps=args.save_steps,
         logging_steps=args.logging_steps,
         dataloader_num_workers=args.num_workers,
+        mlm_loss_weight=args.mlm_loss_weight,
+        nlm_loss_weight=args.nlm_loss_weight,
         ddp_find_unused_parameters=args.find_unused_parameters,
         resume_from_checkpoint=args.resume_from_checkpoint,
     )
