@@ -30,4 +30,4 @@ class TrainingConfig:
     logging_steps: int = 500
     seed: int = 42
     dataloader_num_workers: int = 2
-    ddp_find_unused_parameters: bool = False
+    ddp_find_unused_parameters: bool = True

@@ -147,6 +147,12 @@ def main():
         default=2,
         help="Number of DataLoader worker processes per GPU.",
     )
+    parser.add_argument(
+        "--find_unused_parameters",
+        action="store_true",
+        default=True,
+        help="Enable unused parameter detection in DDP for auxiliary/downstream heads.",
+    )
     args = parser.parse_args()
 
     # -------------------------------------------------------------------
@@ -238,6 +244,7 @@ def main():
         save_steps=args.save_steps,
         logging_steps=args.logging_steps,
         dataloader_num_workers=args.num_workers,
+        ddp_find_unused_parameters=args.find_unused_parameters,
     )
 
     trainer = SinhalaCharBERTTrainer(
