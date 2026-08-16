@@ -10,6 +10,7 @@ from typing import List, Optional
 class TrainingConfig:
     """Hyperparameter configuration for training Sinhala-CharBERT."""
     output_dir: str = "checkpoints/sinhala_charbert"
+    resume_from_checkpoint: Optional[str] = None
     learning_rate: float = 5e-5
     weight_decay: float = 0.01
     adam_beta1: float = 0.9

@@ -3,6 +3,7 @@ Sinhala-CharBERT Pre-Training Engine with Joint Dual-Objective Optimization and 
 Supports single-device (CPU/CUDA/MPS) and multi-GPU Distributed Data Parallel (DDP) training.
 """
 
+import json
 import math
 import os
 from pathlib import Path
@@ -145,6 +146,62 @@ class SinhalaCharBERTTrainer:
             print(msg)
 
     # ------------------------------------------------------------------
+    # Checkpoint Resumption
+    # ------------------------------------------------------------------
+
+    def resume_from_checkpoint(self, checkpoint_dir: Union[str, Path]) -> dict:
+        """Loads model, optimizer, scheduler, and scaler state from a checkpoint directory.
+
+        Returns a dict with 'global_step' and 'epoch' for the training loop to resume from.
+        """
+        ckpt_path = Path(checkpoint_dir)
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"Checkpoint directory not found: {ckpt_path}")
+
+        # 1. Load model weights
+        model_state_path = ckpt_path / "pytorch_model.bin"
+        if model_state_path.exists():
+            state_dict = torch.load(model_state_path, map_location=self.device, weights_only=True)
+            self._unwrapped_model.load_state_dict(state_dict)
+            self._log(f"Resumed model weights from '{model_state_path}'")
+        else:
+            raise FileNotFoundError(f"Model weights not found at '{model_state_path}'")
+
+        # 2. Load optimizer state
+        opt_path = ckpt_path / "optimizer.pt"
+        if opt_path.exists():
+            opt_state = torch.load(opt_path, map_location=self.device, weights_only=True)
+            self.optimizer.load_state_dict(opt_state)
+            self._log(f"Resumed optimizer state from '{opt_path}'")
+
+        # 3. Load LR scheduler state
+        sched_path = ckpt_path / "scheduler.pt"
+        if sched_path.exists():
+            sched_state = torch.load(sched_path, map_location=self.device, weights_only=True)
+            self.scheduler.load_state_dict(sched_state)
+            self._log(f"Resumed scheduler state from '{sched_path}'")
+
+        # 4. Load GradScaler state
+        scaler_path = ckpt_path / "scaler.pt"
+        if self.scaler is not None and scaler_path.exists():
+            scaler_state = torch.load(scaler_path, map_location=self.device, weights_only=True)
+            self.scaler.load_state_dict(scaler_state)
+            self._log(f"Resumed GradScaler state from '{scaler_path}'")
+
+        # 5. Load training state metadata (global_step, epoch)
+        training_state = {"global_step": 0, "epoch": 0}
+        state_path = ckpt_path / "training_state.json"
+        if state_path.exists():
+            with open(state_path, "r") as f:
+                training_state = json.load(f)
+            self._log(
+                f"Resuming from global_step={training_state['global_step']}, "
+                f"epoch={training_state['epoch']}"
+            )
+
+        return training_state
+
+    # ------------------------------------------------------------------
     # Training Loop
     # ------------------------------------------------------------------
 
@@ -202,7 +259,12 @@ class SinhalaCharBERTTrainer:
         }
 
     def train(self) -> None:
-        """Executes the full pre-training loop over the specified maximum steps."""
+        """Executes the full pre-training loop over the specified maximum steps.
+
+        When ``self.cfg.resume_from_checkpoint`` is set, loads all training state
+        from the checkpoint directory and fast-forwards the dataloader past
+        already-completed steps before resuming gradient updates.
+        """
         # Setup sampler: DistributedSampler for multi-GPU, None for single device
         sampler = None
         shuffle = True
@@ -228,6 +290,14 @@ class SinhalaCharBERTTrainer:
         global_step = 0
         total_loss = 0.0
         epoch = 0
+
+        # Resume from checkpoint if specified
+        if self.cfg.resume_from_checkpoint:
+            resumed_state = self.resume_from_checkpoint(self.cfg.resume_from_checkpoint)
+            global_step = resumed_state.get("global_step", 0)
+            epoch = resumed_state.get("epoch", 0)
+            self._log(f"Resuming training from step {global_step}, epoch {epoch}")
+
         start_time = time.time()
 
         self._log(
@@ -236,12 +306,24 @@ class SinhalaCharBERTTrainer:
         )
         self._log(f"Total Steps: {self.cfg.max_steps} | Batch Size: {self.cfg.batch_size} | LR: {self.cfg.learning_rate}")
 
+        # Calculate number of batches per epoch for fast-forward during resume
+        steps_per_epoch = len(dataloader)
+        skip_batches = 0
+        if global_step > 0 and steps_per_epoch > 0:
+            skip_batches = global_step % steps_per_epoch
+            self._log(f"Fast-forwarding past {skip_batches} batches in epoch {epoch}")
+
         while global_step < self.cfg.max_steps:
             # Update sampler epoch for proper shuffling across DDP ranks
             if sampler is not None:
                 sampler.set_epoch(epoch)
 
-            for batch in dataloader:
+            for batch_idx, batch in enumerate(dataloader):
+                # Fast-forward past already-completed batches on resume
+                if skip_batches > 0:
+                    skip_batches -= 1
+                    continue
+
                 if global_step >= self.cfg.max_steps:
                     break
 
@@ -291,13 +373,17 @@ class SinhalaCharBERTTrainer:
                 # Periodic Checkpoint Saving (rank 0 only)
                 if global_step % self.cfg.save_steps == 0 and self.is_main_process:
                     ckpt_path = Path(self.cfg.output_dir) / f"checkpoint-{global_step}"
-                    self.save_checkpoint(ckpt_path)
+                    self.save_checkpoint(ckpt_path, global_step=global_step, epoch=epoch)
 
             epoch += 1
 
         self._log(f"Pre-training complete! Saving final checkpoint to '{self.cfg.output_dir}'...")
         if self.is_main_process:
-            self.save_checkpoint(Path(self.cfg.output_dir) / "final_model")
+            self.save_checkpoint(
+                Path(self.cfg.output_dir) / "final_model",
+                global_step=global_step,
+                epoch=epoch,
+            )
 
         # Synchronize all processes before exit
         if self.is_distributed:
@@ -356,8 +442,13 @@ class SinhalaCharBERTTrainer:
             "val_nlm_loss": total_nlm / max(num_batches, 1),
         }
 
-    def save_checkpoint(self, output_dir: Union[str, Path]) -> None:
-        """Saves model weights, optimizer, vocabularies, and training configuration."""
+    def save_checkpoint(
+        self,
+        output_dir: Union[str, Path],
+        global_step: int = 0,
+        epoch: int = 0,
+    ) -> None:
+        """Saves model weights, optimizer, scheduler, scaler, and training state."""
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
@@ -366,6 +457,20 @@ class SinhalaCharBERTTrainer:
         torch.save(model_to_save.state_dict(), out_path / "pytorch_model.bin")
         torch.save(self.optimizer.state_dict(), out_path / "optimizer.pt")
         torch.save(self.scheduler.state_dict(), out_path / "scheduler.pt")
+
+        # Save GradScaler state for mixed precision resumption
+        if self.scaler is not None:
+            torch.save(self.scaler.state_dict(), out_path / "scaler.pt")
+
+        # Save training loop state for exact resumption
+        training_state = {
+            "global_step": global_step,
+            "epoch": epoch,
+            "max_steps": self.cfg.max_steps,
+            "learning_rate": self.cfg.learning_rate,
+        }
+        with open(out_path / "training_state.json", "w") as f:
+            json.dump(training_state, f, indent=2)
 
         # Save vocabularies and dictionaries for standalone downstream inference
         if hasattr(self.train_dataset, "char_tokenizer") and self.train_dataset.char_tokenizer is not None:

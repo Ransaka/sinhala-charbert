@@ -153,6 +153,12 @@ def main():
         default=True,
         help="Enable unused parameter detection in DDP for auxiliary/downstream heads.",
     )
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        default=None,
+        help="Path to a checkpoint directory to resume training from (e.g. 'checkpoints/sinhala_charbert/checkpoint-5000').",
+    )
     args = parser.parse_args()
 
     # -------------------------------------------------------------------
@@ -245,6 +251,7 @@ def main():
         logging_steps=args.logging_steps,
         dataloader_num_workers=args.num_workers,
         ddp_find_unused_parameters=args.find_unused_parameters,
+        resume_from_checkpoint=args.resume_from_checkpoint,
     )
 
     trainer = SinhalaCharBERTTrainer(
