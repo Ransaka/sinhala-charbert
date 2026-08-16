@@ -59,30 +59,59 @@ class SinhalaCharBERTTrainer:
                 find_unused_parameters=self.cfg.ddp_find_unused_parameters,
             )
 
-        # Setup Optimizer (AdamW) with weight decay exclusions for biases and LayerNorm
+        # Setup Optimizer (AdamW) with differential learning rates
+        # Backbone (warm-started): token_embeddings, encoder.layers.*.transformer_layer, mlm_head
+        # Char channel (random-init): char_embeddings, char_encoder, encoder.layers.*.hi_module,
+        #                             fused_proj, layer_norm, nlm_head
+        char_channel_prefixes = (
+            "char_embeddings", "char_encoder", "hi_module",
+            "fused_proj", "layer_norm", "nlm_head",
+        )
         no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight"]
+
+        char_lr = self.cfg.char_channel_lr or self.cfg.learning_rate
+
+        def _is_char_channel(name: str) -> bool:
+            return any(prefix in name for prefix in char_channel_prefixes)
+
+        backbone_decay = []
+        backbone_no_decay = []
+        char_decay = []
+        char_no_decay = []
+
+        for name, param in self.model.named_parameters():
+            if not param.requires_grad:
+                continue
+            is_no_decay = any(nd in name for nd in no_decay)
+            if _is_char_channel(name):
+                (char_no_decay if is_no_decay else char_decay).append(param)
+            else:
+                (backbone_no_decay if is_no_decay else backbone_decay).append(param)
+
         optimizer_grouped_parameters = [
-            {
-                "params": [
-                    p for n, p in self.model.named_parameters()
-                    if not any(nd in n for nd in no_decay) and p.requires_grad
-                ],
-                "weight_decay": self.cfg.weight_decay,
-            },
-            {
-                "params": [
-                    p for n, p in self.model.named_parameters()
-                    if any(nd in n for nd in no_decay) and p.requires_grad
-                ],
-                "weight_decay": 0.0,
-            },
+            {"params": backbone_decay, "weight_decay": self.cfg.weight_decay, "lr": self.cfg.learning_rate},
+            {"params": backbone_no_decay, "weight_decay": 0.0, "lr": self.cfg.learning_rate},
+            {"params": char_decay, "weight_decay": self.cfg.weight_decay, "lr": char_lr},
+            {"params": char_no_decay, "weight_decay": 0.0, "lr": char_lr},
         ]
+
+        # Filter out empty groups
+        optimizer_grouped_parameters = [g for g in optimizer_grouped_parameters if len(g["params"]) > 0]
+
         self.optimizer = torch.optim.AdamW(
             optimizer_grouped_parameters,
             lr=self.cfg.learning_rate,
             betas=(self.cfg.adam_beta1, self.cfg.adam_beta2),
             eps=self.cfg.adam_epsilon,
         )
+
+        if self.is_main_process and self.cfg.char_channel_lr:
+            backbone_count = len(backbone_decay) + len(backbone_no_decay)
+            char_count = len(char_decay) + len(char_no_decay)
+            self._log(
+                f"Differential LR: backbone ({backbone_count} params) @ {self.cfg.learning_rate:.1e}, "
+                f"char channel ({char_count} params) @ {char_lr:.1e}"
+            )
 
         # Setup Learning Rate Scheduler
         self.scheduler = get_cosine_schedule_with_warmup(

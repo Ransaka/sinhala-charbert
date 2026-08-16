@@ -12,6 +12,7 @@ class TrainingConfig:
     output_dir: str = "checkpoints/sinhala_charbert"
     resume_from_checkpoint: Optional[str] = None
     learning_rate: float = 5e-5
+    char_channel_lr: Optional[float] = None
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999

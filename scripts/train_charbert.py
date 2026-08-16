@@ -115,7 +115,14 @@ def main():
         "--learning_rate",
         type=float,
         default=5e-5,
-        help="Peak learning rate with cosine decay schedule.",
+        help="Peak learning rate for backbone (warm-started) parameters.",
+    )
+    parser.add_argument(
+        "--char_channel_lr",
+        type=float,
+        default=None,
+        help="Peak learning rate for character channel (randomly-initialized) parameters. "
+             "If not set, uses the same value as --learning_rate.",
     )
     parser.add_argument(
         "--max_steps",
@@ -257,6 +264,7 @@ def main():
         batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.learning_rate,
+        char_channel_lr=args.char_channel_lr,
         max_steps=args.max_steps,
         warmup_steps=args.warmup_steps,
         save_steps=args.save_steps,
