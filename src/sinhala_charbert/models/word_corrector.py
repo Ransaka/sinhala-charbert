@@ -1,5 +1,11 @@
 """
 Mode A: Bounded Word-Level Denoising Corrector using CharBERT character representations and NLM dictionary.
+
+Reconstruction Strategy:
+    Subword tokens are grouped by their originating word using `subword_offsets` from the alignment engine.
+    The NLM prediction is taken from the **first subword token** of each word group (which captures the
+    word-start character boundary representation). The full word is then replaced atomically, avoiding
+    the duplication bug where per-subword replacement repeats the full predicted word for each piece.
 """
 
 from dataclasses import dataclass
@@ -16,12 +22,13 @@ from sinhala_charbert.training.dictionary import SinhalaNLMDictionary
 
 @dataclass
 class WordCorrectionCandidate:
-    """Represents a predicted replacement candidate for a token span."""
-    token_index: int
-    original_token: str
+    """Represents a predicted replacement candidate for a word span."""
+    word_index: int
+    original_word: str
     predicted_word: str
     confidence: float
     is_modified: bool
+    token_indices: List[int]
 
 
 class BoundedWordCorrector:
@@ -30,6 +37,9 @@ class BoundedWordCorrector:
     Extracts character channel representations from Sinhala-CharBERT,
     projects them through the Noisy Language Modeling (NLM) head,
     and maps candidate distributions back into valid Sinhala words from the frequent lexicon.
+
+    Crucially, subword tokens are grouped by word and the NLM prediction is aggregated
+    at the word level to produce a single atomic replacement per input word.
     """
 
     def __init__(
@@ -62,6 +72,56 @@ class BoundedWordCorrector:
         self.model.to(self.device)
         self.model.eval()
 
+    def _group_tokens_by_word(
+        self,
+        tokens: List[str],
+        offsets: List[Tuple[int, int]],
+        text: str,
+    ) -> List[Dict]:
+        """Groups subword tokens into word-level spans using offset continuity.
+
+        Returns a list of dicts, each with:
+            - 'token_indices': indices into the tokens list
+            - 'original_word': the original text substring for this word
+            - 'char_start': character start in original text
+            - 'char_end': character end in original text
+        """
+        word_groups: List[Dict] = []
+        current_group: Optional[Dict] = None
+
+        for t_idx in range(len(tokens)):
+            tok_start, tok_end = offsets[t_idx] if t_idx < len(offsets) else (0, 0)
+
+            # Skip special tokens ([CLS], [SEP], [PAD])
+            if tok_start == 0 and tok_end == 0:
+                continue
+
+            token_str = tokens[t_idx]
+            is_continuation = token_str.startswith("##")
+
+            if is_continuation and current_group is not None:
+                # Extend the current word group
+                current_group["token_indices"].append(t_idx)
+                current_group["char_end"] = tok_end
+            else:
+                # Start a new word group
+                if current_group is not None:
+                    word_groups.append(current_group)
+                current_group = {
+                    "token_indices": [t_idx],
+                    "char_start": tok_start,
+                    "char_end": tok_end,
+                }
+
+        if current_group is not None:
+            word_groups.append(current_group)
+
+        # Extract original word text from the raw string
+        for group in word_groups:
+            group["original_word"] = text[group["char_start"]:group["char_end"]]
+
+        return word_groups
+
     def correct_sequence(
         self,
         text: str,
@@ -69,6 +129,14 @@ class BoundedWordCorrector:
     ) -> Tuple[str, List[WordCorrectionCandidate]]:
         """
         Corrects words in a single text sequence using bounded NLM dictionary predictions.
+
+        Word-level reconstruction:
+            1. Tokenize input into subwords, get NLM logits from the character channel.
+            2. Group subwords by word using offset continuity.
+            3. For each word group, take the NLM prediction from the first token (word-start boundary).
+            4. If the prediction exceeds the confidence threshold and differs from the original word,
+               replace the entire word atomically.
+            5. Reconstruct the output by substituting corrected words into the original text.
         """
         threshold = confidence_threshold if confidence_threshold is not None else self.confidence_threshold
         aligned: AlignedSequence = self.alignment_engine.align(text)
@@ -96,66 +164,67 @@ class BoundedWordCorrector:
                 )
                 char_logits = outputs.char_logits  # (1, seq_len, nlm_vocab_size)
             else:
-                backbone_out = self.model(
-                    input_ids=input_ids,
-                    char_input_ids=char_input_ids,
-                    start_char_idx=start_char_idx,
-                    end_char_idx=end_char_idx,
-                    attention_mask=attention_mask,
-                    char_attention_mask=char_attention_mask,
-                )
-                # If using backbone directly without pre-training wrapper
                 return text, []
 
             probs = F.softmax(char_logits[0], dim=-1)  # (seq_len, nlm_vocab_size)
             top_probs, top_ids = torch.max(probs, dim=-1)
 
-        candidates: List[WordCorrectionCandidate] = []
-        tokens = list(aligned.tokens)
-        modified_tokens = list(tokens)
+        # Group subword tokens by word using offset-based continuity
+        word_groups = self._group_tokens_by_word(
+            tokens=list(aligned.tokens),
+            offsets=aligned.subword_offsets,
+            text=aligned.text,
+        )
 
-        for t_idx in range(1, m_len - 1):
-            tok_str = tokens[t_idx]
-            clean_tok_str = tok_str.replace("##", "")
-            
-            prob = float(top_probs[t_idx].item())
-            pred_id = int(top_ids[t_idx].item())
+        candidates: List[WordCorrectionCandidate] = []
+        # Build replacement list: (char_start, char_end, replacement_word)
+        replacements: List[Tuple[int, int, str]] = []
+
+        for w_idx, group in enumerate(word_groups):
+            original_word = group["original_word"]
+            first_token_idx = group["token_indices"][0]
+
+            # Use the NLM prediction from the first subword token of this word
+            prob = float(top_probs[first_token_idx].item())
+            pred_id = int(top_ids[first_token_idx].item())
             predicted_word = self.nlm_dictionary.id_to_word(pred_id)
 
-            # Skip special tokens or empty predictions
+            # Skip special or empty predictions
             if not predicted_word or predicted_word.startswith("[") or predicted_word.startswith("<"):
-                candidates.append(
-                    WordCorrectionCandidate(
-                        token_index=t_idx,
-                        original_token=tok_str,
-                        predicted_word=clean_tok_str,
-                        confidence=prob,
-                        is_modified=False,
-                    )
-                )
+                candidates.append(WordCorrectionCandidate(
+                    word_index=w_idx,
+                    original_word=original_word,
+                    predicted_word=original_word,
+                    confidence=prob,
+                    is_modified=False,
+                    token_indices=group["token_indices"],
+                ))
                 continue
 
-            # Check if prediction exceeds confidence threshold and improves token
+            # Decide whether to apply the correction
             is_mod = (
                 prob >= threshold
-                and predicted_word != clean_tok_str
-                and len(clean_tok_str) > 1
-                and not clean_tok_str.isnumeric()
+                and predicted_word != original_word
+                and len(original_word) > 1
+                and not original_word.isnumeric()
             )
 
             if is_mod:
-                modified_tokens[t_idx] = predicted_word if not tok_str.startswith("##") else f"##{predicted_word}"
+                replacements.append((group["char_start"], group["char_end"], predicted_word))
 
-            candidates.append(
-                WordCorrectionCandidate(
-                    token_index=t_idx,
-                    original_token=tok_str,
-                    predicted_word=predicted_word,
-                    confidence=prob,
-                    is_modified=is_mod,
-                )
-            )
+            candidates.append(WordCorrectionCandidate(
+                word_index=w_idx,
+                original_word=original_word,
+                predicted_word=predicted_word,
+                confidence=prob,
+                is_modified=is_mod,
+                token_indices=group["token_indices"],
+            ))
 
-        # Reconstruct sentence from subwords
-        corrected_text = self.subword_tokenizer.convert_tokens_to_string(modified_tokens[1:-1])
+        # Reconstruct the corrected text by applying replacements right-to-left
+        # (to preserve character offsets)
+        corrected_text = aligned.text
+        for char_start, char_end, replacement in reversed(replacements):
+            corrected_text = corrected_text[:char_start] + replacement + corrected_text[char_end:]
+
         return corrected_text, candidates
