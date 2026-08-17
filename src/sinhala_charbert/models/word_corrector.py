@@ -6,6 +6,10 @@ Reconstruction Strategy:
     The NLM prediction is taken from the **first subword token** of each word group (which captures the
     word-start character boundary representation). The full word is then replaced atomically, avoiding
     the duplication bug where per-subword replacement repeats the full predicted word for each piece.
+
+    An edit distance ratio guard prevents semantic substitutions (e.g., replacing a valid word with a
+    contextually plausible but character-dissimilar word). Only corrections with edit_distance / max_len
+    below `max_edit_ratio` are applied.
 """
 
 from dataclasses import dataclass
@@ -58,6 +62,7 @@ class BoundedWordCorrector:
         self.alignment_engine = alignment_engine
         self.nlm_dictionary = nlm_dictionary
         self.confidence_threshold = confidence_threshold
+        self.max_edit_ratio = 0.5
 
         if device is None:
             if torch.cuda.is_available():
@@ -71,6 +76,39 @@ class BoundedWordCorrector:
 
         self.model.to(self.device)
         self.model.eval()
+
+    @staticmethod
+    def _char_edit_distance(s1: str, s2: str) -> int:
+        """Computes Levenshtein edit distance between two strings."""
+        if len(s1) < len(s2):
+            return BoundedWordCorrector._char_edit_distance(s2, s1)
+        if len(s2) == 0:
+            return len(s1)
+        prev_row = list(range(len(s2) + 1))
+        for i, c1 in enumerate(s1):
+            curr_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                cost = 0 if c1 == c2 else 1
+                curr_row.append(min(
+                    curr_row[j] + 1,
+                    prev_row[j + 1] + 1,
+                    prev_row[j] + cost,
+                ))
+            prev_row = curr_row
+        return prev_row[-1]
+
+    def _is_plausible_correction(self, original: str, predicted: str) -> bool:
+        """Returns True if the predicted word is character-similar enough to be a typo correction.
+
+        Blocks semantic substitutions where the edit distance ratio exceeds max_edit_ratio.
+        Examples:
+            'gurvarayaa' -> 'guruvarayaa'  (ratio ~0.1)  -> PASS (minor insertion)
+            'havasata'   -> 'dahaval'      (ratio ~0.6)  -> BLOCK (semantic rewrite)
+        """
+        dist = self._char_edit_distance(original, predicted)
+        max_len = max(len(original), len(predicted), 1)
+        ratio = dist / max_len
+        return ratio <= self.max_edit_ratio
 
     def _group_tokens_by_word(
         self,
@@ -201,12 +239,15 @@ class BoundedWordCorrector:
                 ))
                 continue
 
-            # Decide whether to apply the correction
+            # Decide whether to apply the correction.
+            # The edit distance guard prevents semantic substitutions where the model
+            # predicts a contextually plausible but character-dissimilar word.
             is_mod = (
                 prob >= threshold
                 and predicted_word != original_word
                 and len(original_word) > 1
                 and not original_word.isnumeric()
+                and self._is_plausible_correction(original_word, predicted_word)
             )
 
             if is_mod:
