@@ -155,6 +155,18 @@ def main():
         help="Number of DataLoader worker processes per GPU.",
     )
     parser.add_argument(
+        "--nlm_max_words",
+        type=int,
+        default=64000,
+        help="Maximum vocabulary size for the NLM word dictionary.",
+    )
+    parser.add_argument(
+        "--nlm_min_freq",
+        type=int,
+        default=2,
+        help="Minimum word frequency to include in the NLM dictionary.",
+    )
+    parser.add_argument(
         "--mlm_loss_weight",
         type=float,
         default=1.0,
@@ -218,11 +230,11 @@ def main():
         max_char_length=args.max_char_length,
     )
 
-    # 3. Build NLM Candidate Dictionary
+    # 3. Build NLM Candidate Dictionary from the full corpus
     if _is_main_process():
         print("Building NLM Word Dictionary...")
     nlm_dict = SinhalaNLMDictionary()
-    nlm_dict.build_from_corpus(raw_texts[:10000], max_words=32000)
+    nlm_dict.build_from_corpus(raw_texts, max_words=args.nlm_max_words, min_freq=args.nlm_min_freq)
     if _is_main_process():
         print(f"NLM Dictionary vocabulary size: {nlm_dict.vocab_size:,}")
 
