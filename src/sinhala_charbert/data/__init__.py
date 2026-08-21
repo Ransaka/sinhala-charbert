@@ -8,6 +8,7 @@ from .dataset_builder import build_synthetic_dataset, synthesize_sample
 from .char_tokenizer import SinhalaCharTokenizer
 from .alignment import AlignedSequence, SequenceAlignmentEngine
 from .collator import DualChannelDataCollator
+from .text_utils import split_sentences, split_sentences_with_spans
 
 __all__ = [
     "KeyLocation",
@@ -23,4 +24,6 @@ __all__ = [
     "AlignedSequence",
     "SequenceAlignmentEngine",
     "DualChannelDataCollator",
+    "split_sentences",
+    "split_sentences_with_spans",
 ]

@@ -248,6 +248,8 @@ def main():
         nlm_dictionary=nlm_dict,
         curriculum_scheduler=curriculum,
     )
+    if _is_main_process():
+        print(f"Total training sentences (after chunking): {len(train_dataset):,}")
 
     # 5. Model Initialization
     if args.backbone_path:

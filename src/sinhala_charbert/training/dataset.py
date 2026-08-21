@@ -12,6 +12,7 @@ from sinhala_charbert.data.alignment import SequenceAlignmentEngine, AlignedSequ
 from sinhala_charbert.data.char_tokenizer import SinhalaCharTokenizer
 from sinhala_charbert.data.syntypo import SinhalaTypoSynthesizer
 from sinhala_charbert.data.collator import DualChannelDataCollator
+from sinhala_charbert.data.text_utils import split_sentences
 from sinhala_charbert.training.curriculum import NoiseCurriculumScheduler
 from sinhala_charbert.training.dictionary import SinhalaNLMDictionary
 
@@ -19,7 +20,8 @@ from sinhala_charbert.training.dictionary import SinhalaNLMDictionary
 class SinhalaCharBERTPretrainDataset(Dataset):
     """
     Dynamic Pre-Training Dataset for Sinhala-CharBERT.
-    Injects noise on-the-fly according to the active training curriculum step,
+    Pre-splits long documents into sentence-level segments to fit context constraints,
+    injects noise on-the-fly according to the active training curriculum step,
     aligns dual-channel sequences, and constructs MLM and NLM supervision targets.
     """
 
@@ -32,8 +34,20 @@ class SinhalaCharBERTPretrainDataset(Dataset):
         nlm_dictionary: SinhalaNLMDictionary,
         curriculum_scheduler: Optional[NoiseCurriculumScheduler] = None,
         nlm_probability: float = 0.15,
+        split_into_sentences: bool = True,
+        max_words_per_sentence: int = 50,
     ):
-        self.texts = texts
+        if split_into_sentences:
+            processed_texts = []
+            for t in texts:
+                if not t or not isinstance(t, str):
+                    continue
+                sentences = split_sentences(t, max_words_per_chunk=max_words_per_sentence)
+                processed_texts.extend(sentences)
+            self.texts = processed_texts if processed_texts else ["සිංහල"]
+        else:
+            self.texts = texts
+
         self.subword_tokenizer = subword_tokenizer
         self.char_tokenizer = char_tokenizer
         self.alignment_engine = alignment_engine

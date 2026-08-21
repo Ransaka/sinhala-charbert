@@ -14,6 +14,7 @@ from sinlib.utils.preprocessing import normalize_sinhala
 from sinhala_charbert.config.model_config import SinhalaCharBERTConfig
 from sinhala_charbert.data.alignment import SequenceAlignmentEngine, AlignedSequence
 from sinhala_charbert.data.char_tokenizer import SinhalaCharTokenizer
+from sinhala_charbert.data.text_utils import split_sentences_with_spans
 from sinhala_charbert.models.modeling_charbert import SinhalaCharBERTForPreTraining, SinhalaCharBERTModel
 from sinhala_charbert.models.word_corrector import BoundedWordCorrector
 from sinhala_charbert.models.seq2seq_decoder import SinhalaCharBERTSeq2SeqModel
@@ -182,32 +183,26 @@ class SinhalaCharBERTCorrector:
             )
         return edits
 
-    def correct(
+    def _correct_single_sentence(
         self,
-        text: str,
+        norm_text: str,
         mode: str = "seq2seq",
         confidence_threshold: float = 0.40,
         max_length: int = 128,
-    ) -> CorrectionResult:
+    ) -> Tuple[str, List[float]]:
         """
-        Corrects typos in input Sinhala text.
-        Args:
-            text: Input Sinhala sentence (with potential typos).
-            mode: 'seq2seq' (Mode B: sound-by-sound open-vocab) or 'word_denoise' (Mode A: fast dictionary).
-            confidence_threshold: Minimum probability required to apply a correction in Mode A.
-            max_length: Maximum target generation length for Mode B.
+        Corrects a single sentence chunk that fits within the model's context window.
+        Returns the corrected sentence string and a list of confidence scores for modified tokens.
         """
-        norm_text = normalize_sinhala(text.strip())
-        if not norm_text:
-            return CorrectionResult(text=text, original_text=text, edits=[], confidence=1.0, mode=mode)
+        if not norm_text.strip():
+            return norm_text, []
 
         if mode == "word_denoise" or isinstance(self.model, SinhalaCharBERTForPreTraining):
             corrected_text, candidates = self.word_corrector.correct_sequence(
                 norm_text, confidence_threshold=confidence_threshold
             )
-            # Estimate mean confidence over modified tokens
             mod_confs = [c.confidence for c in candidates if c.is_modified]
-            overall_conf = float(sum(mod_confs) / len(mod_confs)) if mod_confs else 1.0
+            return corrected_text, mod_confs
 
         elif mode == "seq2seq" and isinstance(self.model, SinhalaCharBERTSeq2SeqModel):
             aligned = self.alignment_engine.align(norm_text)
@@ -232,16 +227,85 @@ class SinhalaCharBERTCorrector:
 
             gen_list = generated_ids[0].tolist()
             corrected_text = self.char_tokenizer.decode(gen_list, skip_special_tokens=True).strip()
-            overall_conf = 0.95
+            return corrected_text, [0.95]
 
         else:
-            # Fallback
-            corrected_text = norm_text
-            overall_conf = 1.0
+            return norm_text, []
 
-        edits = self._compute_edits(text, corrected_text)
+    def correct(
+        self,
+        text: str,
+        mode: str = "seq2seq",
+        confidence_threshold: float = 0.40,
+        max_length: int = 128,
+    ) -> CorrectionResult:
+        """
+        Corrects typos in input Sinhala text (supports arbitrary length paragraphs / Wikipedia articles).
+        Args:
+            text: Input Sinhala document, paragraph, or sentence (with potential typos).
+            mode: 'seq2seq' (Mode B: sound-by-sound open-vocab) or 'word_denoise' (Mode A: fast dictionary).
+            confidence_threshold: Minimum probability required to apply a correction in Mode A.
+            max_length: Maximum target generation length per sentence chunk for Mode B.
+        """
+        if not text or not text.strip():
+            return CorrectionResult(text=text, original_text=text, edits=[], confidence=1.0, mode=mode)
+
+        # Split input into sentence-level spans with exact character offsets
+        spans = split_sentences_with_spans(text, max_words_per_chunk=50)
+
+        if not spans:
+            return CorrectionResult(text=text, original_text=text, edits=[], confidence=1.0, mode=mode)
+
+        # Fast path for single short sentence
+        if len(spans) == 1 and len(text.split()) <= 50:
+            norm_text = normalize_sinhala(text.strip())
+            corr_text, mod_confs = self._correct_single_sentence(
+                norm_text,
+                mode=mode,
+                confidence_threshold=confidence_threshold,
+                max_length=max_length,
+            )
+            overall_conf = float(sum(mod_confs) / len(mod_confs)) if mod_confs else 1.0
+            edits = self._compute_edits(text, corr_text)
+            return CorrectionResult(
+                text=corr_text,
+                original_text=text,
+                edits=edits,
+                confidence=overall_conf,
+                mode=mode,
+            )
+
+        # Multi-sentence / paragraph processing
+        all_mod_confs: List[float] = []
+        reconstructed_parts: List[str] = []
+        last_pos = 0
+
+        for sent_str, s_start, s_end in spans:
+            # Preserve preceding whitespace/formatting
+            if s_start > last_pos:
+                reconstructed_parts.append(text[last_pos:s_start])
+
+            norm_sent = normalize_sinhala(sent_str)
+            corr_sent, mod_confs = self._correct_single_sentence(
+                norm_sent,
+                mode=mode,
+                confidence_threshold=confidence_threshold,
+                max_length=max_length,
+            )
+            reconstructed_parts.append(corr_sent)
+            all_mod_confs.extend(mod_confs)
+            last_pos = s_end
+
+        # Preserve trailing whitespace/formatting
+        if last_pos < len(text):
+            reconstructed_parts.append(text[last_pos:])
+
+        corrected_full_text = "".join(reconstructed_parts)
+        overall_conf = float(sum(all_mod_confs) / len(all_mod_confs)) if all_mod_confs else 1.0
+        edits = self._compute_edits(text, corrected_full_text)
+
         return CorrectionResult(
-            text=corrected_text,
+            text=corrected_full_text,
             original_text=text,
             edits=edits,
             confidence=overall_conf,
