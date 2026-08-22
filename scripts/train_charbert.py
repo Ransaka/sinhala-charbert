@@ -180,9 +180,9 @@ def main():
     )
     parser.add_argument(
         "--find_unused_parameters",
-        action="store_true",
-        default=False,
-        help="Enable unused parameter detection in DDP (default: False).",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=True,
+        help="Enable unused parameter detection in DDP (default: True).",
     )
     parser.add_argument(
         "--resume_from_checkpoint",
