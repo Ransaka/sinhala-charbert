@@ -249,7 +249,7 @@ def main():
         curriculum_scheduler=curriculum,
     )
     if _is_main_process():
-        print(f"Total training sentences (after chunking): {len(train_dataset):,}")
+        print(f"Total training documents: {len(train_dataset):,} (lazy on-the-fly sentence chunking enabled)")
 
     # 5. Model Initialization
     if args.backbone_path:

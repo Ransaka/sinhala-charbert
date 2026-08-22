@@ -20,8 +20,10 @@ from sinhala_charbert.training.dictionary import SinhalaNLMDictionary
 class SinhalaCharBERTPretrainDataset(Dataset):
     """
     Dynamic Pre-Training Dataset for Sinhala-CharBERT.
-    Pre-splits long documents into sentence-level segments to fit context constraints,
-    injects noise on-the-fly according to the active training curriculum step,
+    Uses lazy sentence splitting: stores original articles and randomly samples
+    a sentence chunk per __getitem__ call to avoid materializing millions of
+    sentence strings in memory (which caused OOM on large Wikipedia corpora).
+    Injects noise on-the-fly according to the active training curriculum step,
     aligns dual-channel sequences, and constructs MLM and NLM supervision targets.
     """
 
@@ -34,19 +36,11 @@ class SinhalaCharBERTPretrainDataset(Dataset):
         nlm_dictionary: SinhalaNLMDictionary,
         curriculum_scheduler: Optional[NoiseCurriculumScheduler] = None,
         nlm_probability: float = 0.15,
-        split_into_sentences: bool = True,
         max_words_per_sentence: int = 50,
     ):
-        if split_into_sentences:
-            processed_texts = []
-            for t in texts:
-                if not t or not isinstance(t, str):
-                    continue
-                sentences = split_sentences(t, max_words_per_chunk=max_words_per_sentence)
-                processed_texts.extend(sentences)
-            self.texts = processed_texts if processed_texts else ["සිංහල"]
-        else:
-            self.texts = texts
+        # Store original articles -- do NOT pre-split to avoid OOM
+        self.texts = texts
+        self.max_words_per_sentence = max_words_per_sentence
 
         self.subword_tokenizer = subword_tokenizer
         self.char_tokenizer = char_tokenizer
@@ -64,9 +58,13 @@ class SinhalaCharBERTPretrainDataset(Dataset):
         return len(self.texts)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        clean_text = self.texts[idx]
-        if not clean_text or not isinstance(clean_text, str):
-            clean_text = "සිංහල"
+        raw_text = self.texts[idx]
+        if not raw_text or not isinstance(raw_text, str):
+            raw_text = "සිංහල"
+
+        # Lazy sentence splitting: chunk the article and pick one randomly
+        sentences = split_sentences(raw_text, max_words_per_chunk=self.max_words_per_sentence)
+        clean_text = random.choice(sentences) if sentences else raw_text
 
         # 1. Sample noise profile from active curriculum stage
         noise_profile = self.curriculum.get_profile(self.current_step)

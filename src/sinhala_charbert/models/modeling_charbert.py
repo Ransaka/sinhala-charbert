@@ -224,18 +224,24 @@ class SinhalaCharBERTForPreTraining(nn.Module):
         nlm_loss = None
 
         if mlm_labels is not None:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-            mlm_loss = loss_fct(
-                token_logits.view(-1, self.config.vocab_size),
-                mlm_labels.view(-1),
-            )
+            if (mlm_labels != -100).any():
+                loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+                mlm_loss = loss_fct(
+                    token_logits.view(-1, self.config.vocab_size),
+                    mlm_labels.view(-1),
+                )
+            else:
+                mlm_loss = torch.tensor(0.0, device=token_logits.device, requires_grad=True)
 
         if nlm_labels is not None:
-            nlm_loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-            nlm_loss = nlm_loss_fct(
-                char_logits.view(-1, self.config.nlm_vocab_size),
-                nlm_labels.view(-1),
-            )
+            if (nlm_labels != -100).any():
+                nlm_loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+                nlm_loss = nlm_loss_fct(
+                    char_logits.view(-1, self.config.nlm_vocab_size),
+                    nlm_labels.view(-1),
+                )
+            else:
+                nlm_loss = torch.tensor(0.0, device=char_logits.device, requires_grad=True)
 
         if mlm_loss is not None and nlm_loss is not None:
             total_loss = (mlm_loss_weight * mlm_loss) + (nlm_loss_weight * nlm_loss)
