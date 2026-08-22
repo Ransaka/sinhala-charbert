@@ -118,6 +118,7 @@ class TestSinhalaCharBERTModel(unittest.TestCase):
             end_char_idx=end_char_idx,
             mlm_labels=mlm_labels,
             nlm_labels=nlm_labels,
+            return_logits=True,
         )
 
         self.assertIsNotNone(outputs.loss)

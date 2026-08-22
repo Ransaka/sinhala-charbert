@@ -181,8 +181,8 @@ def main():
     parser.add_argument(
         "--find_unused_parameters",
         action="store_true",
-        default=True,
-        help="Enable unused parameter detection in DDP for auxiliary/downstream heads.",
+        default=False,
+        help="Enable unused parameter detection in DDP (default: False).",
     )
     parser.add_argument(
         "--resume_from_checkpoint",

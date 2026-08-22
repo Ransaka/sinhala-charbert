@@ -196,9 +196,11 @@ class SinhalaCharBERTForPreTraining(nn.Module):
         nlm_loss_weight: float = 1.0,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
+        return_logits: Optional[bool] = None,
     ) -> SinhalaCharBERTPreTrainingOutput:
         """
         Forward pass with dual MLM + NLM pre-training loss computation.
+        Uses active-position logit projections when computing losses to drastically reduce VRAM usage.
         """
         outputs = self.charbert(
             input_ids=input_ids,
@@ -216,32 +218,31 @@ class SinhalaCharBERTForPreTraining(nn.Module):
         token_hidden = outputs.last_hidden_state
         char_hidden = outputs.last_char_hidden_state
 
-        token_logits = self.mlm_head(token_hidden)
-        char_logits = self.nlm_head(char_hidden)
-
         total_loss = None
         mlm_loss = None
         nlm_loss = None
 
+        # 1. Compute MLM loss (project only active masked positions to save VRAM)
         if mlm_labels is not None:
-            if (mlm_labels != -100).any():
-                loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-                mlm_loss = loss_fct(
-                    token_logits.view(-1, self.config.vocab_size),
-                    mlm_labels.view(-1),
-                )
+            mlm_mask = (mlm_labels != -100)
+            if mlm_mask.any():
+                masked_hidden = token_hidden[mlm_mask]
+                masked_logits = self.mlm_head(masked_hidden)
+                loss_fct = nn.CrossEntropyLoss()
+                mlm_loss = loss_fct(masked_logits, mlm_labels[mlm_mask])
             else:
-                mlm_loss = torch.tensor(0.0, device=token_logits.device, requires_grad=True)
+                mlm_loss = torch.tensor(0.0, device=token_hidden.device, requires_grad=True)
 
+        # 2. Compute NLM loss (project only active supervised positions to save VRAM)
         if nlm_labels is not None:
-            if (nlm_labels != -100).any():
-                nlm_loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-                nlm_loss = nlm_loss_fct(
-                    char_logits.view(-1, self.config.nlm_vocab_size),
-                    nlm_labels.view(-1),
-                )
+            nlm_mask = (nlm_labels != -100)
+            if nlm_mask.any():
+                active_char_hidden = char_hidden[nlm_mask]
+                active_char_logits = self.nlm_head(active_char_hidden)
+                nlm_loss_fct = nn.CrossEntropyLoss()
+                nlm_loss = nlm_loss_fct(active_char_logits, nlm_labels[nlm_mask])
             else:
-                nlm_loss = torch.tensor(0.0, device=char_logits.device, requires_grad=True)
+                nlm_loss = torch.tensor(0.0, device=char_hidden.device, requires_grad=True)
 
         if mlm_loss is not None and nlm_loss is not None:
             total_loss = (mlm_loss_weight * mlm_loss) + (nlm_loss_weight * nlm_loss)
@@ -249,6 +250,19 @@ class SinhalaCharBERTForPreTraining(nn.Module):
             total_loss = mlm_loss
         elif nlm_loss is not None:
             total_loss = nlm_loss
+
+        # Compute full sequence logits only if requested or in inference mode
+        should_return_logits = (
+            return_logits
+            if return_logits is not None
+            else (mlm_labels is None and nlm_labels is None)
+        )
+        if should_return_logits:
+            token_logits = self.mlm_head(token_hidden)
+            char_logits = self.nlm_head(char_hidden)
+        else:
+            token_logits = None
+            char_logits = None
 
         return SinhalaCharBERTPreTrainingOutput(
             loss=total_loss,
