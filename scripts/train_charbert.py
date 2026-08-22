@@ -220,8 +220,19 @@ def main():
     if _is_main_process():
         print("Initializing Subword and Character Tokenizers...")
     subword_tokenizer = AutoTokenizer.from_pretrained(args.subword_tokenizer)
-    char_tokenizer = SinhalaCharTokenizer()
-    char_tokenizer.train_on_corpus(raw_texts[:5000])
+
+    # Check if vocabulary files exist in resume checkpoint directory
+    resume_ckpt_dir = Path(args.resume_from_checkpoint) if args.resume_from_checkpoint else None
+    char_vocab_path = (resume_ckpt_dir / "char_vocab.json") if resume_ckpt_dir else None
+    nlm_dict_path = (resume_ckpt_dir / "nlm_dict.json") if resume_ckpt_dir else None
+
+    if char_vocab_path and char_vocab_path.exists():
+        if _is_main_process():
+            print(f"Loading Character Tokenizer from checkpoint: '{char_vocab_path}'")
+        char_tokenizer = SinhalaCharTokenizer.load(char_vocab_path)
+    else:
+        char_tokenizer = SinhalaCharTokenizer()
+        char_tokenizer.train_on_corpus(raw_texts[:5000])
 
     alignment_engine = SequenceAlignmentEngine(
         subword_tokenizer=subword_tokenizer,
@@ -230,11 +241,17 @@ def main():
         max_char_length=args.max_char_length,
     )
 
-    # 3. Build NLM Candidate Dictionary from the full corpus
-    if _is_main_process():
-        print("Building NLM Word Dictionary...")
-    nlm_dict = SinhalaNLMDictionary()
-    nlm_dict.build_from_corpus(raw_texts, max_words=args.nlm_max_words, min_freq=args.nlm_min_freq)
+    # 3. NLM Candidate Dictionary Setup (load from checkpoint or build from corpus)
+    if nlm_dict_path and nlm_dict_path.exists():
+        if _is_main_process():
+            print(f"Loading NLM Word Dictionary from checkpoint: '{nlm_dict_path}'")
+        nlm_dict = SinhalaNLMDictionary.load(nlm_dict_path)
+    else:
+        if _is_main_process():
+            print("Building NLM Word Dictionary from corpus...")
+        nlm_dict = SinhalaNLMDictionary()
+        nlm_dict.build_from_corpus(raw_texts, max_words=args.nlm_max_words, min_freq=args.nlm_min_freq)
+
     if _is_main_process():
         print(f"NLM Dictionary vocabulary size: {nlm_dict.vocab_size:,}")
 
